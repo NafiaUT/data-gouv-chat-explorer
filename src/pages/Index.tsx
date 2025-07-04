@@ -97,11 +97,15 @@ const Index = () => {
     setIsLoading(true);
     
     try {
-      const conversationParam = conversationId 
-        ? `conversation_id=${conversationId}` 
-        : 'conversation_model_id=conv-model-1';
+      // Correction: Toujours inclure conversation_model_id ET conversation_id si disponible
+      let conversationParams = 'conversation_model_id=conv-model-1';
+      if (conversationId) {
+        conversationParams += `&conversation_id=${conversationId}`;
+      }
       
-      const url = `${serverUrl}/multi_search?q=${encodeURIComponent(query)}&conversation=true&${conversationParam}`;
+      const url = `${serverUrl}/multi_search?q=${encodeURIComponent(query)}&conversation=true&${conversationParams}`;
+      
+      console.log('URL de requête:', url);
       
       const response = await fetch(url, {
         method: 'POST',
@@ -115,24 +119,30 @@ const Index = () => {
               collection: 'datagouv',
               query_by: 'embedding',
               exclude_fields: 'embedding',
-              per_page: 10
+              per_page: 10,
+              vector_distance_threshold: 0.8 // Ajout d'un seuil pour filtrer les résultats peu pertinents
             }
           ]
         })
       });
 
       if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Erreur de réponse:', errorData);
         throw new Error(`Erreur HTTP: ${response.status}`);
       }
 
       const data: TypesenseResponse = await response.json();
+      console.log('Réponse Typesense:', data);
       
-      // Extraction des résultats
-      const results: DatasetResult[] = data.results[0]?.hits.map(hit => ({
-        ...hit.document,
-        text_match: hit.text_match,
-        vector_distance: hit.vector_distance
-      })) || [];
+      // Filtrage des résultats par pertinence (vector_distance plus faible = plus pertinent)
+      const results: DatasetResult[] = data.results[0]?.hits
+        .filter(hit => hit.vector_distance && hit.vector_distance < 0.7) // Filtrer les résultats peu pertinents
+        .map(hit => ({
+          ...hit.document,
+          text_match: hit.text_match,
+          vector_distance: hit.vector_distance
+        })) || [];
 
       // Mise à jour de l'ID de conversation
       if (data.conversation?.conversation_id) {
@@ -146,9 +156,15 @@ const Index = () => {
         timestamp: new Date()
       };
 
+      // Vérifier si on a des résultats pertinents
+      let assistantContent = data.conversation?.answer || 'Aucune réponse disponible';
+      if (results.length === 0) {
+        assistantContent += '\n\nAucun jeu de données pertinent trouvé pour votre requête. Essayez de reformuler votre question ou d\'utiliser des termes différents.';
+      }
+
       const assistantMessage: ConversationMessage = {
         type: 'assistant',
-        content: data.conversation?.answer || 'Aucune réponse disponible',
+        content: assistantContent,
         timestamp: new Date(),
         results
       };
