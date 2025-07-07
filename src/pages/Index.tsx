@@ -104,7 +104,7 @@ const Index = () => {
     setIsLoading(true);
     
     try {
-      let conversationParams = 'conversation_model_id=conv-model-1';
+      let conversationParams = 'conversation_model_id=conv-model-fr';
       if (conversationId) {
         conversationParams += `&conversation_id=${conversationId}`;
       }
