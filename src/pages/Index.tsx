@@ -58,25 +58,28 @@ const Index = () => {
 
   useEffect(() => {
     const savedConversationId = localStorage.getItem('typesense_conversation_id');
-    const savedMessages = localStorage.getItem('typesense_messages');
     const savedApiKey = localStorage.getItem('typesense_api_key');
     const savedServerUrl = localStorage.getItem('typesense_server_url');
     const savedConversationsData = localStorage.getItem('typesense_saved_conversations');
     
     if (savedConversationId) setConversationId(savedConversationId);
-    if (savedMessages) setMessages(JSON.parse(savedMessages));
     if (savedApiKey) setApiKey(savedApiKey);
     if (savedServerUrl) setServerUrl(savedServerUrl);
-    if (savedConversationsData) setSavedConversations(JSON.parse(savedConversationsData));
+    if (savedConversationsData) {
+      const parsedConversations: SavedConversation[] = JSON.parse(savedConversationsData);
+      // Convert timestamp strings back to Date objects
+      const conversationsWithDates = parsedConversations.map(conv => ({
+        ...conv,
+        timestamp: new Date(conv.timestamp),
+      }));      setSavedConversations(conversationsWithDates);
+    }
   }, []);
 
   useEffect(() => {
     if (conversationId) {
       localStorage.setItem('typesense_conversation_id', conversationId);
     }
-    if (messages.length > 0) {
-      localStorage.setItem('typesense_messages', JSON.stringify(messages));
-    }
+    // We will no longer automatically save the current messages here.
   }, [conversationId, messages]);
 
   useEffect(() => {
@@ -243,14 +246,10 @@ const Index = () => {
   };
 
   const clearConversation = () => {
-    if (messages.length > 0) {
-      saveCurrentConversation();
-    }
-    
+    saveCurrentConversation();
     setMessages([]);
     setConversationId(null);
     localStorage.removeItem('typesense_conversation_id');
-    localStorage.removeItem('typesense_messages');
     
     toast({
       title: "Nouvelle conversation",
