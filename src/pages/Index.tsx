@@ -1,6 +1,5 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Database, ExternalLink, MessageCircle } from 'lucide-react';
+import { Send, Database, ExternalLink, MessageCircle, History, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,6 +37,13 @@ interface TypesenseResponse {
   }>;
 }
 
+interface SavedConversation {
+  id: string;
+  title: string;
+  timestamp: Date;
+  messages: ConversationMessage[];
+}
+
 const Index = () => {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -45,23 +51,25 @@ const Index = () => {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [serverUrl, setServerUrl] = useState('http://localhost:8108');
+  const [savedConversations, setSavedConversations] = useState<SavedConversation[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // Chargement de la conversation depuis localStorage
   useEffect(() => {
     const savedConversationId = localStorage.getItem('typesense_conversation_id');
     const savedMessages = localStorage.getItem('typesense_messages');
     const savedApiKey = localStorage.getItem('typesense_api_key');
     const savedServerUrl = localStorage.getItem('typesense_server_url');
+    const savedConversationsData = localStorage.getItem('typesense_saved_conversations');
     
     if (savedConversationId) setConversationId(savedConversationId);
     if (savedMessages) setMessages(JSON.parse(savedMessages));
     if (savedApiKey) setApiKey(savedApiKey);
     if (savedServerUrl) setServerUrl(savedServerUrl);
+    if (savedConversationsData) setSavedConversations(JSON.parse(savedConversationsData));
   }, []);
 
-  // Sauvegarde automatique
   useEffect(() => {
     if (conversationId) {
       localStorage.setItem('typesense_conversation_id', conversationId);
@@ -79,7 +87,6 @@ const Index = () => {
     if (serverUrl) localStorage.setItem('typesense_server_url', serverUrl);
   }, [serverUrl]);
 
-  // Scroll automatique vers le bas
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -97,7 +104,6 @@ const Index = () => {
     setIsLoading(true);
     
     try {
-      // Correction: Toujours inclure conversation_model_id ET conversation_id si disponible
       let conversationParams = 'conversation_model_id=conv-model-1';
       if (conversationId) {
         conversationParams += `&conversation_id=${conversationId}`;
@@ -120,7 +126,7 @@ const Index = () => {
               query_by: 'embedding',
               exclude_fields: 'embedding',
               per_page: 10,
-              vector_distance_threshold: 0.8 // Ajout d'un seuil pour filtrer les résultats peu pertinents
+              vector_distance_threshold: 0.8
             }
           ]
         })
@@ -135,28 +141,25 @@ const Index = () => {
       const data: TypesenseResponse = await response.json();
       console.log('Réponse Typesense:', data);
       
-      // Filtrage des résultats par pertinence (vector_distance plus faible = plus pertinent)
       const results: DatasetResult[] = data.results[0]?.hits
-        .filter(hit => hit.vector_distance && hit.vector_distance < 0.7) // Filtrer les résultats peu pertinents
+        .filter(hit => hit.vector_distance && hit.vector_distance < 0.7)
+        .slice(0, 5)
         .map(hit => ({
           ...hit.document,
           text_match: hit.text_match,
           vector_distance: hit.vector_distance
         })) || [];
 
-      // Mise à jour de l'ID de conversation
       if (data.conversation?.conversation_id) {
         setConversationId(data.conversation.conversation_id);
       }
 
-      // Ajout des messages
       const userMessage: ConversationMessage = {
         type: 'user',
         content: query,
         timestamp: new Date()
       };
 
-      // Vérifier si on a des résultats pertinents
       let assistantContent = data.conversation?.answer || 'Aucune réponse disponible';
       if (results.length === 0) {
         assistantContent += '\n\nAucun jeu de données pertinent trouvé pour votre requête. Essayez de reformuler votre question ou d\'utiliser des termes différents.';
@@ -192,14 +195,66 @@ const Index = () => {
     await searchDatasets(query);
   };
 
+  const saveCurrentConversation = () => {
+    if (messages.length === 0) return;
+    
+    const firstUserMessage = messages.find(msg => msg.type === 'user');
+    const title = firstUserMessage ? 
+      firstUserMessage.content.substring(0, 50) + (firstUserMessage.content.length > 50 ? '...' : '') :
+      'Conversation sans titre';
+    
+    const newConversation: SavedConversation = {
+      id: conversationId || Date.now().toString(),
+      title,
+      timestamp: new Date(),
+      messages: [...messages]
+    };
+    
+    const updatedConversations = [newConversation, ...savedConversations.filter(conv => conv.id !== newConversation.id)];
+    setSavedConversations(updatedConversations);
+    localStorage.setItem('typesense_saved_conversations', JSON.stringify(updatedConversations));
+    
+    toast({
+      title: "Conversation sauvegardée",
+      description: "Votre conversation a été ajoutée à l'historique",
+    });
+  };
+
+  const loadConversation = (conversation: SavedConversation) => {
+    setMessages(conversation.messages);
+    setConversationId(conversation.id);
+    setShowHistory(false);
+    
+    toast({
+      title: "Conversation chargée",
+      description: `Conversation "${conversation.title}" restaurée`,
+    });
+  };
+
+  const deleteConversation = (conversationToDelete: SavedConversation) => {
+    const updatedConversations = savedConversations.filter(conv => conv.id !== conversationToDelete.id);
+    setSavedConversations(updatedConversations);
+    localStorage.setItem('typesense_saved_conversations', JSON.stringify(updatedConversations));
+    
+    toast({
+      title: "Conversation supprimée",
+      description: "La conversation a été supprimée de l'historique",
+    });
+  };
+
   const clearConversation = () => {
+    if (messages.length > 0) {
+      saveCurrentConversation();
+    }
+    
     setMessages([]);
     setConversationId(null);
     localStorage.removeItem('typesense_conversation_id');
     localStorage.removeItem('typesense_messages');
+    
     toast({
-      title: "Conversation effacée",
-      description: "Nouvelle conversation démarrée",
+      title: "Nouvelle conversation",
+      description: "Conversation précédente sauvegardée",
     });
   };
 
@@ -210,7 +265,6 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <div className="container mx-auto px-4 py-8 max-w-6xl">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-4">
             <Database className="h-8 w-8 text-blue-600" />
@@ -223,7 +277,6 @@ const Index = () => {
           </p>
         </div>
 
-        {/* Configuration */}
         <Card className="mb-6 border-dashed">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
@@ -257,8 +310,63 @@ const Index = () => {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Zone de chat */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="lg:col-span-1">
+            <Card className="h-[600px] flex flex-col">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-4">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <History className="h-5 w-5" />
+                  Historique
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowHistory(!showHistory)}
+                >
+                  {showHistory ? 'Masquer' : 'Afficher'}
+                </Button>
+              </CardHeader>
+              
+              {showHistory && (
+                <CardContent className="flex-1 overflow-y-auto space-y-2">
+                  {savedConversations.length === 0 ? (
+                    <div className="text-center text-gray-500 py-8">
+                      <History className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">Aucune conversation sauvegardée</p>
+                    </div>
+                  ) : (
+                    savedConversations.map((conversation) => (
+                      <div key={conversation.id} className="group relative">
+                        <Card 
+                          className="p-3 hover:shadow-md transition-shadow cursor-pointer"
+                          onClick={() => loadConversation(conversation)}
+                        >
+                          <div className="text-sm font-medium truncate mb-1">
+                            {conversation.title}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {conversation.timestamp.toLocaleDateString()}
+                          </div>
+                        </Card>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 h-6 w-6 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteConversation(conversation);
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              )}
+            </Card>
+          </div>
+
           <div className="lg:col-span-2">
             <Card className="h-[600px] flex flex-col">
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-4">
@@ -266,11 +374,18 @@ const Index = () => {
                   <MessageCircle className="h-5 w-5" />
                   Conversation
                 </CardTitle>
-                {messages.length > 0 && (
-                  <Button variant="outline" size="sm" onClick={clearConversation}>
-                    Nouvelle conversation
-                  </Button>
-                )}
+                <div className="flex gap-2">
+                  {messages.length > 0 && (
+                    <>
+                      <Button variant="outline" size="sm" onClick={saveCurrentConversation}>
+                        Sauvegarder
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={clearConversation}>
+                        Nouvelle conversation
+                      </Button>
+                    </>
+                  )}
+                </div>
               </CardHeader>
               
               <CardContent className="flex-1 overflow-y-auto space-y-4">
@@ -296,7 +411,7 @@ const Index = () => {
                         <p className="text-sm">{message.content}</p>
                         {message.results && message.results.length > 0 && (
                           <div className="mt-2 text-xs text-gray-500">
-                            {message.results.length} dataset(s) trouvé(s)
+                            {message.results.length} dataset(s) trouvé(s) (max 5)
                           </div>
                         )}
                       </div>
@@ -325,11 +440,10 @@ const Index = () => {
             </Card>
           </div>
 
-          {/* Résultats */}
-          <div className="space-y-4">
+          <div className="lg:col-span-1 space-y-4">
             <h2 className="text-xl font-semibold flex items-center gap-2">
               <Database className="h-5 w-5" />
-              Datasets trouvés
+              Datasets (Top 5)
             </h2>
             
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
